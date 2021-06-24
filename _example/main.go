@@ -20,9 +20,9 @@ import (
 	"context"
 	"time"
 
+	"git.fd.io/govpp.git/api"
 	"github.com/edwarnicke/govpp/binapi/memif"
 	"github.com/edwarnicke/log"
-
 	"github.com/edwarnicke/vpphelper"
 )
 
@@ -35,27 +35,71 @@ func main() {
 	exitOnErrCh(ctx, cancel, vppErrCh)
 
 	// Create a RPC client for the memif api
-	c := memif.NewServiceClient(conn)
-	MemifSocketFilenameAddDel := memif.MemifSocketFilenameAddDel{}
-
+	isClient := true
 	// Add a memif socket
+	socketID, _ := createMemifSocket(ctx, conn)
+	// Create a memif interface
+	mode := memif.MEMIF_MODE_API_IP
+	createMemif(ctx, conn, socketID, mode, isClient)
+	// Delete a memif socket
+	dumpMemif(ctx, conn)
+
+	cancel()
+	<-vppErrCh
+}
+
+func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint32, err error) {
+	c := memif.NewServiceClient(conn)
+	MemifSocketFilenameAddDel := memif.MemifSocketFilenameAddDel{
+		IsAdd:          true,
+		SocketID:       1,
+		SocketFilename: "FirstSocketFile",
+	}
 	_, memifAddDel_err := c.MemifSocketFilenameAddDel(ctx, &MemifSocketFilenameAddDel)
 	if memifAddDel_err != nil {
 		log.Entry(ctx).Fatalln("ERROR: MemifSocketFilenameAddDel failed:", memifAddDel_err)
 	}
 
-	if !MemifSocketFilenameAddDel.IsAdd {
-		log.Entry(ctx).Fatalln("ERROR: socket not added:")
-	}
 	log.Entry(ctx).Infof("Socket file created")
 	log.Entry(ctx).Infof("SocketID: %v\n"+
-		"SocketFilename: %v\n",
-		MemifSocketFilenameAddDel.SocketID, MemifSocketFilenameAddDel.SocketFilename)
+		"SocketFilename: %v\n"+
+		"IsAdd:%v\n",
+		MemifSocketFilenameAddDel.SocketID, MemifSocketFilenameAddDel.SocketFilename, MemifSocketFilenameAddDel.IsAdd)
+	return socketID, memifAddDel_err
+}
 
-	// Create a memif interface
-	// _, memifCreate_err := c.MemifCreate(ctx, &memif.MemifCreate{})
-	cancel()
-	<-vppErrCh
+func createMemif(ctx context.Context, conn api.Connection, socketID uint32, mode memif.MemifMode, isClient bool) error {
+	role := memif.MEMIF_ROLE_API_MASTER
+	if isClient {
+		role = memif.MEMIF_ROLE_API_SLAVE
+	}
+	memifCreate := &memif.MemifCreate{
+		Role:     role,
+		SocketID: socketID,
+		Mode:     mode,
+	}
+	rsp, err := memif.NewServiceClient(conn).MemifCreate(ctx, memifCreate)
+	if err != nil {
+		log.Entry(ctx).Fatalln("ERROR: memifCreate failed:", err)
+	}
+	log.Entry(ctx).Infof("Memif interface created")
+	log.Entry(ctx).Infof("swIfIndex"+
+		"Role"+
+		"SocketID",
+		rsp.SwIfIndex, memifCreate.Role, memifCreate.SocketID)
+	// ifindex.Store(ctx, isClient, rsp.SwIfIndex)
+	return nil
+}
+
+func dumpMemif(ctx context.Context, conn api.Connection) (memif.RPCService_MemifDumpClient, error) {
+	c := memif.NewServiceClient(conn)
+
+	MemifDumpClient, MemifDumpErr := c.MemifDump(ctx, &memif.MemifDump{})
+	if MemifDumpErr != nil {
+		log.Entry(ctx).Fatalln("ERROR: MemifDump failed:", MemifDumpErr)
+	}
+	log.Entry(ctx).Infof("Socket file dump")
+	return MemifDumpClient, MemifDumpErr
 }
 
 func exitOnErrCh(ctx context.Context, cancel context.CancelFunc, errCh <-chan error) {
