@@ -18,7 +18,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"time"
 
@@ -35,7 +34,7 @@ func main() {
 	connectCtx, _ := context.WithTimeout(ctx, time.Second)
 	conn, vppErrCh := vpphelper.StartAndDialContext(connectCtx)
 	exitOnErrCh(ctx, cancel, vppErrCh)
-
+	
 	// Create a RPC client for the memif api
 	isClient := true
 	// Add a memif socket
@@ -44,10 +43,11 @@ func main() {
 	mode := memif.MEMIF_MODE_API_IP
 	createMemif(ctx, conn, socketID, mode, isClient)
 	// Dump a memif socket
-	dumpMemif(ctx, conn)
+	// dumpMemif(ctx, conn)
 
 	// connect to VPP
-	conn_client, err := net.Dial("unix", "~/FirstSocketFile.sock")
+	socketAddr := "/var/run/vpp/memif.sock"
+	conn_client, err := net.Dial("unixpacket", socketAddr)
 
 	if err != nil {
 		log.Entry(ctx).Fatalln("ERROR: connect to VPP master failed:", err)
@@ -57,7 +57,8 @@ func main() {
 	if err != nil {
 		log.Entry(ctx).Fatalln("ERROR: read VPP msg failed:", err)
 	}
-	fmt.Printf("%v\n",n)
+	log.Entry(ctx).Infof("%v\n",n)
+
 	cancel()
 	<-vppErrCh
 }
@@ -67,7 +68,7 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint3
 	MemifSocketFilenameAddDel := memif.MemifSocketFilenameAddDel{
 		IsAdd:          true,
 		SocketID:       1,
-		SocketFilename: "~/FirstSocketFile.sock",
+		SocketFilename: "/var/run/vpp/memif.sock",
 	}
 	_, memifAddDel_err := c.MemifSocketFilenameAddDel(ctx, &MemifSocketFilenameAddDel)
 	if memifAddDel_err != nil {
@@ -107,12 +108,12 @@ func createMemif(ctx context.Context, conn api.Connection, socketID uint32, mode
 func dumpMemif(ctx context.Context, conn api.Connection) (memif.RPCService_MemifDumpClient, error) {
 	c := memif.NewServiceClient(conn)
 
-	MemifDumpClient, MemifDumpErr := c.MemifDump(ctx, &memif.MemifDump{})
-	if MemifDumpErr != nil {
-		log.Entry(ctx).Fatalln("ERROR: MemifDump failed:", MemifDumpErr)
+	memifDumpMsg, err := c.MemifDump(ctx, &memif.MemifDump{})
+	if err != nil {
+		log.Entry(ctx).Fatalln("ERROR: MemifDump failed:", err)
 	}
 	log.Entry(ctx).Infof("Socket file dump")
-	return MemifDumpClient, MemifDumpErr
+	return memifDumpMsg, err
 }
 
 func exitOnErrCh(ctx context.Context, cancel context.CancelFunc, errCh <-chan error) {
