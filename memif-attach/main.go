@@ -18,6 +18,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"time"
 
 	"git.fd.io/govpp.git/api"
@@ -41,9 +43,21 @@ func main() {
 	// Create a memif interface
 	mode := memif.MEMIF_MODE_API_IP
 	createMemif(ctx, conn, socketID, mode, isClient)
-	// Delete a memif socket
+	// Dump a memif socket
 	dumpMemif(ctx, conn)
 
+	// connect to VPP
+	conn_client, err := net.Dial("unix", "~/FirstSocketFile.sock")
+
+	if err != nil {
+		log.Entry(ctx).Fatalln("ERROR: connect to VPP master failed:", err)
+	}
+	buf := make([]byte, 1024)
+	n, err := conn_client.Read(buf)
+	if err != nil {
+		log.Entry(ctx).Fatalln("ERROR: read VPP msg failed:", err)
+	}
+	fmt.Printf("%v\n",n)
 	cancel()
 	<-vppErrCh
 }
@@ -53,7 +67,7 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint3
 	MemifSocketFilenameAddDel := memif.MemifSocketFilenameAddDel{
 		IsAdd:          true,
 		SocketID:       1,
-		SocketFilename: "FirstSocketFile",
+		SocketFilename: "~/FirstSocketFile.sock",
 	}
 	_, memifAddDel_err := c.MemifSocketFilenameAddDel(ctx, &MemifSocketFilenameAddDel)
 	if memifAddDel_err != nil {
@@ -87,7 +101,6 @@ func createMemif(ctx context.Context, conn api.Connection, socketID uint32, mode
 		"Role"+
 		"SocketID",
 		rsp.SwIfIndex, memifCreate.Role, memifCreate.SocketID)
-	// ifindex.Store(ctx, isClient, rsp.SwIfIndex)
 	return nil
 }
 
