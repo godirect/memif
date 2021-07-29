@@ -18,11 +18,13 @@ package main
 
 import (
 	"context"
-	"net"
+	// "net"
 	"time"
-
+	"io"
 	"git.fd.io/govpp.git/api"
 	"github.com/edwarnicke/govpp/binapi/memif"
+	// "github.com/edwarnicke/govpp/binapi/interface"
+	//  "github.com/edwarnicke/govpp/binapi/interface_types"
 	"github.com/edwarnicke/log"
 	"github.com/edwarnicke/vpphelper"
 )
@@ -43,31 +45,40 @@ func main() {
 	mode := memif.MEMIF_MODE_API_IP
 	createMemif(ctx, conn, socketID, mode, isClient)
 	// Dump a memif socket
-	// dumpMemif(ctx, conn)
-
+	RPCService_MemifDumpCli, _ := dumpMemif(ctx, conn)
+	for {
+		reply, err := RPCService_MemifDumpCli.Recv()
+		log.Entry(ctx).Infof("Socket ID from dump:%v", reply.ID)
+		if err == io.EOF {
+			break
+		}
+	}
 	// connect to VPP
-	socketAddr := "/var/run/vpp/memif.sock"
-	conn_client, err := net.Dial("unixpacket", socketAddr)
+	// socketAddr := "/var/run/vpp/memif.sock"
+	// conn_client, err := net.Dial("unixpacket", socketAddr)
 
-	if err != nil {
-		log.Entry(ctx).Fatalln("ERROR: connect to VPP master failed:", err)
-	}
-	buf := make([]byte, 1024)
-	n, err := conn_client.Read(buf)
-	if err != nil {
-		log.Entry(ctx).Fatalln("ERROR: read VPP msg failed:", err)
-	}
-	log.Entry(ctx).Infof("%v\n",n)
+	// if err != nil {
+	// 	log.Entry(ctx).Fatalln("ERROR: connect to VPP master failed:", err)
+	// }
+	// buf := make([]byte, 1024)
+	// n, err := conn_client.Read(buf)
+	// if err != nil {
+	// 	log.Entry(ctx).Fatalln("ERROR: read VPP msg failed:", err)
+	// }
+	// log.Entry(ctx).Infof("%v\n",n)
 
 	cancel()
 	<-vppErrCh
 }
-
+// SwFlags := interface.SwInterfaceSetFlags {
+// 	SwIfIndex: 0 `binapi:"interface_index,name=sw_if_index" json:"sw_if_index,omitempty"`
+// 	Flags: 1  `binapi:"if_status_flags,name=flags" json:"flags,omitempty"`
+// }
 func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint32, err error) {
 	c := memif.NewServiceClient(conn)
 	MemifSocketFilenameAddDel := memif.MemifSocketFilenameAddDel{
 		IsAdd:          true,
-		SocketID:       1,
+		SocketID:       2,
 		SocketFilename: "/var/run/vpp/memif.sock",
 	}
 	_, memifAddDel_err := c.MemifSocketFilenameAddDel(ctx, &MemifSocketFilenameAddDel)
@@ -80,7 +91,7 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint3
 		"SocketFilename: %v\n"+
 		"IsAdd:%v\n",
 		MemifSocketFilenameAddDel.SocketID, MemifSocketFilenameAddDel.SocketFilename, MemifSocketFilenameAddDel.IsAdd)
-	return socketID, memifAddDel_err
+	return MemifSocketFilenameAddDel.SocketID, memifAddDel_err
 }
 
 func createMemif(ctx context.Context, conn api.Connection, socketID uint32, mode memif.MemifMode, isClient bool) error {
@@ -98,9 +109,9 @@ func createMemif(ctx context.Context, conn api.Connection, socketID uint32, mode
 		log.Entry(ctx).Fatalln("ERROR: memifCreate failed:", err)
 	}
 	log.Entry(ctx).Infof("Memif interface created")
-	log.Entry(ctx).Infof("swIfIndex"+
-		"Role"+
-		"SocketID",
+	log.Entry(ctx).Infof("swIfIndex %v\n"+
+		"Role %v\n"+
+		"SocketID %v\n",
 		rsp.SwIfIndex, memifCreate.Role, memifCreate.SocketID)
 	return nil
 }
