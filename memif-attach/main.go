@@ -21,6 +21,9 @@ import (
 	"net"
 	"time"
 	// "io"
+	"encoding/binary"
+	"bufio"
+	"bytes"
 	"git.fd.io/govpp.git/api"
 	"github.com/edwarnicke/govpp/binapi/memif"
 	interfaces "github.com/edwarnicke/govpp/binapi/interface"
@@ -29,6 +32,21 @@ import (
 	"github.com/edwarnicke/vpphelper"
 )
 
+// HelloReplyMsg type
+type HelloMsg struct {
+	max_region int16 
+	max_m2s_ring int16 
+	max_s2m_ring int16
+	min_version int16 
+	max_version int16
+	max_log2_ring_size int8 
+}
+// UnmarshalBinary Function
+func (replyMsg *HelloMsg) UnmarshalBinary(data []byte) error {
+	buf := bytes.NewReader(data)
+	err := binary.Read(buf, binary.BigEndian, replyMsg)
+	return err
+}
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	
@@ -45,26 +63,29 @@ func main() {
 	mode := memif.MEMIF_MODE_API_IP
 	createMemif(ctx, conn, socketID, mode, isClient)
 	
-	// Dump a memif socket
+	// Dump memif info
 	dumpMemif(ctx, conn)
 	
-	// for {
-	// 	if err == io.EOF {
-	// 		break
-	// 	}
-	// }
 	// connect to VPP
 	conn_client, err := net.Dial("unixpacket", socketAddr)
-
 	if err != nil {
 		log.Entry(ctx).Fatalln("ERROR: connect to VPP master failed:", err)
 	}
-	buf := make([]byte, 1024)
-	n, err := conn_client.Read(buf)
-	if err != nil {
-		log.Entry(ctx).Fatalln("ERROR: read VPP msg failed:", err)
+	// read hello message from master vpp
+	helloMsg := &HelloMsg{}
+	reader := bufio.NewReader(conn_client)
+	buf, _, readErr := reader.ReadLine()
+	if readErr != nil {
+		log.Entry(ctx).Fatalln("Read Error", readErr)
 	}
-	log.Entry(ctx).Infof("%v\n",n)
+
+	helloErr := helloMsg.UnmarshalBinary(buf) // decode reply message
+	if err != nil {
+		log.Entry(ctx).Fatalln("Error while decoding data read from the vpp master", helloErr)
+	}
+
+	log.Entry(ctx).Infof("max_region: %v\n",
+	helloMsg.max_region)
 
 	cancel()
 	<-vppErrCh
@@ -75,14 +96,13 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint3
 	MemifSocketFilenameAddDel := memif.MemifSocketFilenameAddDel{
 		IsAdd:          true,
 		SocketID:       2,
-		SocketFilename: "/var/run/vpp/memif2.sock",
+		SocketFilename: "/var/run/vpp/memif4.sock",
 	}
 	_, memifAddDel_err := c.MemifSocketFilenameAddDel(ctx, &MemifSocketFilenameAddDel)
 	if memifAddDel_err != nil {
 		log.Entry(ctx).Fatalln("ERROR: MemifSocketFilenameAddDel failed:", memifAddDel_err)
 	}
 
-	log.Entry(ctx).Infof("Socket file created")
 	log.Entry(ctx).Infof("Socket file created\n"+
 		"SocketID: %v\n"+
 		"SocketFilename: %v\n"+
@@ -93,7 +113,7 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint3
 
 func createMemif(ctx context.Context, conn api.Connection, socketID uint32, mode memif.MemifMode, isClient bool) error {
 	role := memif.MEMIF_ROLE_API_MASTER
-	if isClient {
+	if !isClient {
 		role = memif.MEMIF_ROLE_API_SLAVE
 	}
 	memifCreate := &memif.MemifCreate{
