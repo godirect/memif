@@ -24,6 +24,7 @@ import (
 	"encoding/binary"
 	"bufio"
 	"bytes"
+	"unsafe"
 	"git.fd.io/govpp.git/api"
 	"github.com/edwarnicke/govpp/binapi/memif"
 	interfaces "github.com/edwarnicke/govpp/binapi/interface"
@@ -32,14 +33,35 @@ import (
 	"github.com/edwarnicke/vpphelper"
 )
 
+type MemifMsg struct {
+	HelloMsgType HelloMsg
+	InitMsgType InitMsg
+}
 // HelloReplyMsg type
 type HelloMsg struct {
-	max_region int16 
-	max_m2s_ring int16 
-	max_s2m_ring int16
-	min_version int16 
-	max_version int16
-	max_log2_ring_size int8 
+	Max_region uint16 
+	Max_m2s_ring uint16 
+	Max_s2m_ring uint16
+	Min_version uint16 
+	Max_version uint16
+	Max_log2_ring_size uint8 
+	Name [32]uint8
+}
+
+// InitMsg
+const MEMIF_SECRET_SIZE = 24
+type MemifInterfaceMode int
+const (
+	MEMIF_INTERFACE_MODE_ETHERNET MemifInterfaceMode = iota
+	MEMIF_INTERFACE_MODE_IP
+	MEMIF_INTERFACE_MODE_PUNT_INJECT
+)
+type InitMsg struct {
+	Version uint16
+	Id uint32
+	Mode MemifInterfaceMode
+	Secret  [MEMIF_SECRET_SIZE]uint8
+	Name [32]uint8
 }
 // UnmarshalBinary Function
 func (replyMsg *HelloMsg) UnmarshalBinary(data []byte) error {
@@ -60,8 +82,7 @@ func main() {
 	// Add a memif socket
 	socketID, socketAddr, _:= createMemifSocket(ctx, conn)
 	// Create a memif interface
-	mode := memif.MEMIF_MODE_API_IP
-	createMemif(ctx, conn, socketID, mode, isClient)
+	createMemif(ctx, conn, socketID, isClient)
 	
 	// Dump memif info
 	dumpMemif(ctx, conn)
@@ -74,18 +95,12 @@ func main() {
 	// read hello message from master vpp
 	helloMsg := &HelloMsg{}
 	reader := bufio.NewReader(conn_client)
-	buf, _, readErr := reader.ReadLine()
-	if readErr != nil {
-		log.Entry(ctx).Fatalln("Read Error", readErr)
+	helloErr := binary.Read(reader, binary.BigEndian, helloMsg)
+	if helloErr != nil {
+		log.Entry(ctx).Fatalln("ERROR: read from VPP master hello message failed:", err)
 	}
-
-	helloErr := helloMsg.UnmarshalBinary(buf) // decode reply message
-	if err != nil {
-		log.Entry(ctx).Fatalln("Error while decoding data read from the vpp master", helloErr)
-	}
-
-	log.Entry(ctx).Infof("max_region: %v\n",
-	helloMsg.max_region)
+	log.Entry(ctx).Infof("max_region: %v\n"+"size of hellomsg: %v\n",
+	helloMsg.Max_region, unsafe.Sizeof(helloMsg))
 
 	cancel()
 	<-vppErrCh
@@ -96,7 +111,7 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint3
 	MemifSocketFilenameAddDel := memif.MemifSocketFilenameAddDel{
 		IsAdd:          true,
 		SocketID:       2,
-		SocketFilename: "/var/run/vpp/memif4.sock",
+		SocketFilename: "/var/run/vpp/memif6.sock",
 	}
 	_, memifAddDel_err := c.MemifSocketFilenameAddDel(ctx, &MemifSocketFilenameAddDel)
 	if memifAddDel_err != nil {
@@ -111,11 +126,12 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint3
 	return MemifSocketFilenameAddDel.SocketID, MemifSocketFilenameAddDel.SocketFilename, memifAddDel_err 
 }
 
-func createMemif(ctx context.Context, conn api.Connection, socketID uint32, mode memif.MemifMode, isClient bool) error {
+func createMemif(ctx context.Context, conn api.Connection, socketID uint32, isClient bool) error {
 	role := memif.MEMIF_ROLE_API_MASTER
 	if !isClient {
 		role = memif.MEMIF_ROLE_API_SLAVE
 	}
+	mode := memif.MEMIF_MODE_API_IP
 	memifCreate := &memif.MemifCreate{
 		Role:     role,
 		SocketID: socketID,
@@ -153,12 +169,20 @@ func dumpMemif(ctx context.Context, conn api.Connection) () {
 		log.Entry(ctx).Fatalln("ERROR: MemifDump failed:", err)
 	}
 	log.Entry(ctx).Infof("Socket file dump")
+	// done := make(chan bool)
+	// for {
 	reply, err := memifDumpMsg.Recv()
+	// if err == io.EOF {
+	// 	done <- true //means stream is finished
+	// 		return
+	// }
 	if err != nil {
 		log.Entry(ctx).Fatalln("ERROR: MemifDump Recv failed:", err)
 	}
 	log.Entry(ctx).Infof("Socket ID from dump:%v", reply.ID)
-	
+	// }
+	// <-done
+	log.Entry(ctx).Infof("Finish dumping from memif")
 	return 
 }
 
