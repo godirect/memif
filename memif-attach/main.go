@@ -24,7 +24,6 @@ import (
 	"encoding/binary"
 	"bufio"
 	"bytes"
-	"unsafe"
 	"git.fd.io/govpp.git/api"
 	"github.com/edwarnicke/govpp/binapi/memif"
 	interfaces "github.com/edwarnicke/govpp/binapi/interface"
@@ -93,14 +92,15 @@ func main() {
 		log.Entry(ctx).Fatalln("ERROR: connect to VPP master failed:", err)
 	}
 	// read hello message from master vpp
-	helloMsg := &HelloMsg{}
-	reader := bufio.NewReader(conn_client)
-	helloErr := binary.Read(reader, binary.BigEndian, helloMsg)
-	if helloErr != nil {
-		log.Entry(ctx).Fatalln("ERROR: read from VPP master hello message failed:", err)
-	}
-	log.Entry(ctx).Infof("max_region: %v\n"+"size of hellomsg: %v\n",
-	helloMsg.Max_region, unsafe.Sizeof(helloMsg))
+	handleHelloMsg(ctx, conn_client)
+	// helloMsg := &HelloMsg{}
+	// reader := bufio.NewReader(conn_client)
+	// helloErr := binary.Read(reader, binary.BigEndian, helloMsg)
+	// if helloErr != nil {
+	// 	log.Entry(ctx).Fatalln("ERROR: read from VPP master hello message failed:", err)
+	// }
+	// log.Entry(ctx).Infof("max_region: %v\n"+"size of hellomsg: %v\n",
+	// helloMsg.Max_region, unsafe.Sizeof(*helloMsg))
 
 	cancel()
 	<-vppErrCh
@@ -111,7 +111,7 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint3
 	MemifSocketFilenameAddDel := memif.MemifSocketFilenameAddDel{
 		IsAdd:          true,
 		SocketID:       2,
-		SocketFilename: "/var/run/vpp/memif6.sock",
+		SocketFilename: "/var/run/vpp/memif8.sock",
 	}
 	_, memifAddDel_err := c.MemifSocketFilenameAddDel(ctx, &MemifSocketFilenameAddDel)
 	if memifAddDel_err != nil {
@@ -184,6 +184,23 @@ func dumpMemif(ctx context.Context, conn api.Connection) () {
 	// <-done
 	log.Entry(ctx).Infof("Finish dumping from memif")
 	return 
+}
+
+func handleHelloMsg(ctx context.Context, conn_client net.Conn) {
+	helloMsg := &HelloMsg{}
+	reader := bufio.NewReader(conn_client)
+	err := binary.Read(reader, binary.BigEndian, helloMsg)
+	if err != nil {
+		log.Entry(ctx).Fatalln("ERROR: read from VPP master hello message failed:", err)
+	}
+	log.Entry(ctx).Infof("max_region: %v\n"+
+	"Max_m2s_ring: %v\n"+
+	"Max_s2m_ring: %v\n"+
+	"Min_version: %v\n"+
+	"Max_version: %v\n"+
+	"Max_log2_ring_size: %v\n"+
+	"Name: %v\n",
+	helloMsg.Max_region, helloMsg.Max_m2s_ring, helloMsg.Max_s2m_ring, helloMsg.Min_version, helloMsg.Max_version, helloMsg.Max_log2_ring_size, helloMsg.Name)
 }
 
 func exitOnErrCh(ctx context.Context, cancel context.CancelFunc, errCh <-chan error) {
