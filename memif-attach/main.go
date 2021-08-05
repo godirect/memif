@@ -38,14 +38,14 @@ type MemifMsg struct {
 }
 // HelloReplyMsg type
 type HelloMsg struct {
+	Name [32]byte // 32 bytes array
+	Min_version uint16 
+	Max_version uint16
 	Max_region uint16 
 	Max_m2s_ring uint16 
 	Max_s2m_ring uint16
-	Min_version uint16 
-	Max_version uint16
 	Max_log2_ring_size uint8 
-	Name [32]uint8
-}
+} 
 
 // InitMsg
 const MEMIF_SECRET_SIZE = 24
@@ -56,8 +56,8 @@ const (
 	MEMIF_INTERFACE_MODE_PUNT_INJECT
 )
 type InitMsg struct {
-	Version uint16
-	Id uint32
+	Version uint16 // check the file
+	Id uint32 // socket id?
 	Mode MemifInterfaceMode
 	Secret  [MEMIF_SECRET_SIZE]uint8
 	Name [32]uint8
@@ -93,15 +93,7 @@ func main() {
 	}
 	// read hello message from master vpp
 	handleHelloMsg(ctx, conn_client)
-	// helloMsg := &HelloMsg{}
-	// reader := bufio.NewReader(conn_client)
-	// helloErr := binary.Read(reader, binary.BigEndian, helloMsg)
-	// if helloErr != nil {
-	// 	log.Entry(ctx).Fatalln("ERROR: read from VPP master hello message failed:", err)
-	// }
-	// log.Entry(ctx).Infof("max_region: %v\n"+"size of hellomsg: %v\n",
-	// helloMsg.Max_region, unsafe.Sizeof(*helloMsg))
-
+	// sendInitMsg()
 	cancel()
 	<-vppErrCh
 }
@@ -111,7 +103,7 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint3
 	MemifSocketFilenameAddDel := memif.MemifSocketFilenameAddDel{
 		IsAdd:          true,
 		SocketID:       2,
-		SocketFilename: "/var/run/vpp/memif8.sock",
+		SocketFilename: "/var/run/vpp/memif11.sock",
 	}
 	_, memifAddDel_err := c.MemifSocketFilenameAddDel(ctx, &MemifSocketFilenameAddDel)
 	if memifAddDel_err != nil {
@@ -200,7 +192,28 @@ func handleHelloMsg(ctx context.Context, conn_client net.Conn) {
 	"Max_version: %v\n"+
 	"Max_log2_ring_size: %v\n"+
 	"Name: %v\n",
-	helloMsg.Max_region, helloMsg.Max_m2s_ring, helloMsg.Max_s2m_ring, helloMsg.Min_version, helloMsg.Max_version, helloMsg.Max_log2_ring_size, helloMsg.Name)
+	helloMsg.Max_region, helloMsg.Max_m2s_ring, helloMsg.Max_s2m_ring, helloMsg.Min_version, helloMsg.Max_version, helloMsg.Max_log2_ring_size, string(helloMsg.Name[:]))
+}
+
+func sendInitMsg(ctx context.Context, conn_client net.Conn, socketID uint32, name [32]uint8) {
+	initMsg := &InitMsg{
+		Version: 2,
+		Id: socketID,
+		Mode: MEMIF_INTERFACE_MODE_IP,
+		Secret: "",
+		Name: name,
+	}
+
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.BigEndian, initMsg)
+	if err != nil {
+		log.Entry(ctx).Fatalln("Encoding Error", err)
+	}
+	writer := bufio.NewWriter(conn_client)
+	_, writeErr := writer.Write(buf.Bytes())
+	if writeErr != nil {
+		log.Entry(ctx).Fatalln("Error while writing encoded message over connection", writeErr)
+	}
 }
 
 func exitOnErrCh(ctx context.Context, cancel context.CancelFunc, errCh <-chan error) {
