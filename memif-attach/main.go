@@ -49,10 +49,10 @@ type HelloMsg struct {
 
 // InitMsg
 const MEMIF_SECRET_SIZE = 24
-type MemifInterfaceMode int
+type MemifInterfaceMode int32
 const (
 	MEMIF_INTERFACE_MODE_ETHERNET MemifInterfaceMode = iota
-	MEMIF_INTERFACE_MODE_IP
+	MEMIF_INTERFACE_MODE_IP // the one to create memif
 	MEMIF_INTERFACE_MODE_PUNT_INJECT
 )
 type InitMsg struct {
@@ -60,8 +60,24 @@ type InitMsg struct {
 	Id uint32 // socket id?
 	Mode MemifInterfaceMode
 	Secret  [MEMIF_SECRET_SIZE]uint8
-	Name [32]uint8
+	Name [32]byte
 }
+
+// Add Region Message
+type AddRegionMsg struct {
+	Index uint16
+	Size uint64
+}
+
+// Add Ring Message
+type AddRingMsg struct {
+	Index uint16
+	Region uint16
+	Offset uint32
+	Max_log2_ring_size uint8
+	Private_hdr_size uint16
+}
+
 // UnmarshalBinary Function
 func (replyMsg *HelloMsg) UnmarshalBinary(data []byte) error {
 	buf := bytes.NewReader(data)
@@ -91,9 +107,10 @@ func main() {
 	if err != nil {
 		log.Entry(ctx).Fatalln("ERROR: connect to VPP master failed:", err)
 	}
-	// read hello message from master vpp
-	handleHelloMsg(ctx, conn_client)
-	// sendInitMsg()
+	// read hello message from server
+	helloMsg := handleHelloMsg(ctx, conn_client)
+	// send init message to server
+	sendInitMsg(ctx, conn_client, helloMsg)
 	cancel()
 	<-vppErrCh
 }
@@ -146,7 +163,7 @@ func createMemif(ctx context.Context, conn api.Connection, socketID uint32, isCl
 	}
 	retVal, err := interfaces.NewServiceClient(conn).SwInterfaceSetFlags(ctx, swinterface)
 	if err != nil {
-		log.Entry(ctx).Fatalln("ERROR:  %v", err)
+		log.Entry(ctx).Fatalln("Set AdminUp ERROR:  %v", err)
 	}
 	log.Entry(ctx).Infof("SwInterfaceSetFlags %v", retVal)
 
@@ -178,7 +195,7 @@ func dumpMemif(ctx context.Context, conn api.Connection) () {
 	return 
 }
 
-func handleHelloMsg(ctx context.Context, conn_client net.Conn) {
+func handleHelloMsg(ctx context.Context, conn_client net.Conn) (helloMsgReply *HelloMsg){
 	helloMsg := &HelloMsg{}
 	reader := bufio.NewReader(conn_client)
 	err := binary.Read(reader, binary.BigEndian, helloMsg)
@@ -193,15 +210,33 @@ func handleHelloMsg(ctx context.Context, conn_client net.Conn) {
 	"Max_log2_ring_size: %v\n"+
 	"Name: %v\n",
 	helloMsg.Max_region, helloMsg.Max_m2s_ring, helloMsg.Max_s2m_ring, helloMsg.Min_version, helloMsg.Max_version, helloMsg.Max_log2_ring_size, string(helloMsg.Name[:]))
+	return helloMsg
 }
 
-func sendInitMsg(ctx context.Context, conn_client net.Conn, socketID uint32, name [32]uint8) {
+// func handleAkgMsg(ctx context.Context, conn_client net.Conn) {
+// 	helloMsg := &HelloMsg{}
+// 	reader := bufio.NewReader(conn_client)
+// 	err := binary.Read(reader, binary.BigEndian, helloMsg)
+// 	if err != nil {
+// 		log.Entry(ctx).Fatalln("ERROR: read from VPP master hello message failed:", err)
+// 	}
+// 	log.Entry(ctx).Infof("max_region: %v\n"+
+// 	"Max_m2s_ring: %v\n"+
+// 	"Max_s2m_ring: %v\n"+
+// 	"Min_version: %v\n"+
+// 	"Max_version: %v\n"+
+// 	"Max_log2_ring_size: %v\n"+
+// 	"Name: %v\n",
+// 	helloMsg.Max_region, helloMsg.Max_m2s_ring, helloMsg.Max_s2m_ring, helloMsg.Min_version, helloMsg.Max_version, helloMsg.Max_log2_ring_size, string(helloMsg.Name[:]))
+// }
+
+func sendInitMsg(ctx context.Context, conn_client net.Conn, helloMsg *HelloMsg) {
 	initMsg := &InitMsg{
-		Version: 2,
-		Id: socketID,
+		Version: ((helloMsg.Max_version<<8) | helloMsg.Min_version),
+		Id: 0, // hardcoded for now
 		Mode: MEMIF_INTERFACE_MODE_IP,
-		Secret: "",
-		Name: name,
+		Secret: [24]uint8{0},
+		Name: helloMsg.Name,
 	}
 
 	buf := new(bytes.Buffer)
@@ -214,6 +249,48 @@ func sendInitMsg(ctx context.Context, conn_client net.Conn, socketID uint32, nam
 	if writeErr != nil {
 		log.Entry(ctx).Fatalln("Error while writing encoded message over connection", writeErr)
 	}
+	log.Entry(ctx).Infof("Init message sent")
+}
+
+func sendAddRegionMsg(ctx context.Context, conn_client net.Conn, helloMsg *HelloMsg) {
+	addRegionMsg := &AddRegionMsg{
+		Index: hellMsg.Max_region,
+		Size: hellMsg.Max_log2_ring_size, // hardcoded for now
+	}
+
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.BigEndian, addRegionMsg)
+	if err != nil {
+		log.Entry(ctx).Fatalln("Encoding Error", err)
+	}
+	writer := bufio.NewWriter(conn_client)
+	_, writeErr := writer.Write(buf.Bytes())
+	if writeErr != nil {
+		log.Entry(ctx).Fatalln("Error while writing add region encoded message over connection", writeErr)
+	}
+	log.Entry(ctx).Infof("Add region message sent")
+}
+
+func sendAddRingMsg(ctx context.Context, conn_client net.Conn, helloMsg *HelloMsg) {
+	addRingMsg := &AddRingMsg{
+		Index: helloMsg.Max_m2s_ring,
+		Region: hellMsg.Max_region, 
+		Offset: ,
+		Max_log2_ring_size: hellMsg.Max_log2_ring_size,
+		Private_hdr_size: 0,
+	}
+
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.BigEndian, addRegionMsg)
+	if err != nil {
+		log.Entry(ctx).Fatalln("Encoding Error", err)
+	}
+	writer := bufio.NewWriter(conn_client)
+	_, writeErr := writer.Write(buf.Bytes())
+	if writeErr != nil {
+		log.Entry(ctx).Fatalln("Error while writing add ring encoded message over connection", writeErr)
+	}
+	log.Entry(ctx).Infof("Add ring message sent")
 }
 
 func exitOnErrCh(ctx context.Context, cancel context.CancelFunc, errCh <-chan error) {
