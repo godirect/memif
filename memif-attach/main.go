@@ -20,7 +20,6 @@ import (
 	"context"
 	"net"
 	"time"
-	// "io"
 	"encoding/binary"
 	"bufio"
 	"bytes"
@@ -32,12 +31,17 @@ import (
 	"github.com/edwarnicke/vpphelper"
 )
 
+// Ack message type
+type AckMsg struct {
+	Ack uint16
+}
 type MemifMsg struct {
 	HelloMsgType HelloMsg
 	InitMsgType InitMsg
 }
 // HelloReplyMsg type
 type HelloMsg struct {
+	Ack AckMsg
 	Name [32]byte // 32 bytes array
 	Min_version uint16 
 	Max_version uint16
@@ -56,34 +60,14 @@ const (
 	MEMIF_INTERFACE_MODE_PUNT_INJECT
 )
 type InitMsg struct {
+	Ack AckMsg
 	Version uint16 // check the file
-	Id uint32 // socket id?
+	Id uint32 // 0
 	Mode MemifInterfaceMode
 	Secret  [MEMIF_SECRET_SIZE]uint8
 	Name [32]byte
 }
 
-// Add Region Message
-type AddRegionMsg struct {
-	Index uint16
-	Size uint64
-}
-
-// Add Ring Message
-type AddRingMsg struct {
-	Index uint16
-	Region uint16
-	Offset uint32
-	Max_log2_ring_size uint8
-	Private_hdr_size uint16
-}
-
-// UnmarshalBinary Function
-func (replyMsg *HelloMsg) UnmarshalBinary(data []byte) error {
-	buf := bytes.NewReader(data)
-	err := binary.Read(buf, binary.BigEndian, replyMsg)
-	return err
-}
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	
@@ -100,7 +84,7 @@ func main() {
 	createMemif(ctx, conn, socketID, isClient)
 	
 	// Dump memif info
-	dumpMemif(ctx, conn)
+	// dumpMemif(ctx, conn)
 	
 	// connect to VPP
 	conn_client, err := net.Dial("unixpacket", socketAddr)
@@ -213,23 +197,6 @@ func handleHelloMsg(ctx context.Context, conn_client net.Conn) (helloMsgReply *H
 	return helloMsg
 }
 
-// func handleAkgMsg(ctx context.Context, conn_client net.Conn) {
-// 	helloMsg := &HelloMsg{}
-// 	reader := bufio.NewReader(conn_client)
-// 	err := binary.Read(reader, binary.BigEndian, helloMsg)
-// 	if err != nil {
-// 		log.Entry(ctx).Fatalln("ERROR: read from VPP master hello message failed:", err)
-// 	}
-// 	log.Entry(ctx).Infof("max_region: %v\n"+
-// 	"Max_m2s_ring: %v\n"+
-// 	"Max_s2m_ring: %v\n"+
-// 	"Min_version: %v\n"+
-// 	"Max_version: %v\n"+
-// 	"Max_log2_ring_size: %v\n"+
-// 	"Name: %v\n",
-// 	helloMsg.Max_region, helloMsg.Max_m2s_ring, helloMsg.Max_s2m_ring, helloMsg.Min_version, helloMsg.Max_version, helloMsg.Max_log2_ring_size, string(helloMsg.Name[:]))
-// }
-
 func sendInitMsg(ctx context.Context, conn_client net.Conn, helloMsg *HelloMsg) {
 	initMsg := &InitMsg{
 		Version: ((helloMsg.Max_version<<8) | helloMsg.Min_version),
@@ -250,47 +217,6 @@ func sendInitMsg(ctx context.Context, conn_client net.Conn, helloMsg *HelloMsg) 
 		log.Entry(ctx).Fatalln("Error while writing encoded message over connection", writeErr)
 	}
 	log.Entry(ctx).Infof("Init message sent")
-}
-
-func sendAddRegionMsg(ctx context.Context, conn_client net.Conn, helloMsg *HelloMsg) {
-	addRegionMsg := &AddRegionMsg{
-		Index: hellMsg.Max_region,
-		Size: hellMsg.Max_log2_ring_size, // hardcoded for now
-	}
-
-	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.BigEndian, addRegionMsg)
-	if err != nil {
-		log.Entry(ctx).Fatalln("Encoding Error", err)
-	}
-	writer := bufio.NewWriter(conn_client)
-	_, writeErr := writer.Write(buf.Bytes())
-	if writeErr != nil {
-		log.Entry(ctx).Fatalln("Error while writing add region encoded message over connection", writeErr)
-	}
-	log.Entry(ctx).Infof("Add region message sent")
-}
-
-func sendAddRingMsg(ctx context.Context, conn_client net.Conn, helloMsg *HelloMsg) {
-	addRingMsg := &AddRingMsg{
-		Index: helloMsg.Max_m2s_ring,
-		Region: hellMsg.Max_region, 
-		Offset: ,
-		Max_log2_ring_size: hellMsg.Max_log2_ring_size,
-		Private_hdr_size: 0,
-	}
-
-	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.BigEndian, addRegionMsg)
-	if err != nil {
-		log.Entry(ctx).Fatalln("Encoding Error", err)
-	}
-	writer := bufio.NewWriter(conn_client)
-	_, writeErr := writer.Write(buf.Bytes())
-	if writeErr != nil {
-		log.Entry(ctx).Fatalln("Error while writing add ring encoded message over connection", writeErr)
-	}
-	log.Entry(ctx).Infof("Add ring message sent")
 }
 
 func exitOnErrCh(ctx context.Context, cancel context.CancelFunc, errCh <-chan error) {
