@@ -146,7 +146,7 @@ func createMemif(ctx context.Context, conn api.Connection, socketID uint32, isCl
 	}
 	retVal, err := interfaces.NewServiceClient(conn).SwInterfaceSetFlags(ctx, swinterface)
 	if err != nil {
-		log.Entry(ctx).Fatalln("Set AdminUp ERROR:  %v", err)
+		log.Entry(ctx).Fatalln("Set AdminUp ERROR:", err)
 	}
 	log.Entry(ctx).Infof("SwInterfaceSetFlags %v", retVal)
 }
@@ -159,19 +159,16 @@ func dumpMemif(ctx context.Context, conn api.Connection) {
 		log.Entry(ctx).Fatalln("ERROR: MemifDump failed:", err)
 	}
 	log.Entry(ctx).Infof("Socket file dump")
-	// done := make(chan bool)
-	// for {
-	reply, err := memifDumpMsg.Recv()
-	// if err == io.EOF {
-	// 	done <- true //means stream is finished
-	// 		return
-	// }
-	if err != nil {
-		log.Entry(ctx).Fatalln("ERROR: MemifDump Recv failed:", err)
+	for {
+		reply, err := memifDumpMsg.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Entry(ctx).Fatalln("ERROR: MemifDump Recv failed:", err)
+		}
+		log.Entry(ctx).Infof("Socket ID from dump:%v", reply.ID)
 	}
-	log.Entry(ctx).Infof("Socket ID from dump:%v", reply.ID)
-	// }
-	// <-done
 	log.Entry(ctx).Infof("Finish dumping from memif")
 }
 
