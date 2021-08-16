@@ -1,3 +1,19 @@
+// Copyright (c) 2020 Cisco and/or its affiliates.
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package main
 
 import (
@@ -15,12 +31,12 @@ import (
 	"time"
 )
 
-// Ack message type
+// AckMsg type
 type AckMsg struct {
 	Ack uint16
 }
 
-// HelloReplyMsg type
+// HelloMsg type
 type HelloMsg struct {
 	Ack             AckMsg
 	Name            [32]byte // 32 bytes array
@@ -32,31 +48,30 @@ type HelloMsg struct {
 	MaxLog2RingSize uint8
 }
 
-// InitMsg
-const MEMIF_SECRET_SIZE = 24
+const MemifSecretSize = 24
 
+// MemifInterfaceMode 
 type MemifInterfaceMode int32
-
 const (
 	MEMIF_INTERFACE_MODE_IP MemifInterfaceMode = iota // the one to create memif
 )
 
+// InitMsg
 type InitMsg struct {
 	Ack     AckMsg
 	Version uint16 // check the file
-	Id      uint32 // 0
+	ID      uint32 // 0
 	Mode    MemifInterfaceMode
-	Secret  [MEMIF_SECRET_SIZE]uint8
+	Secret  [MemifSecretSize]uint8
 	Name    [32]byte
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-
+	ctx, cancel1 := context.WithCancel(context.Background())
 	// Connect to VPP with a 1 second timeout
-	connectCtx, _ := context.WithTimeout(ctx, time.Second)
+	connectCtx, cancel2 := context.WithTimeout(ctx, time.Second)
 	conn, vppErrCh := vpphelper.StartAndDialContext(connectCtx)
-	exitOnErrCh(ctx, cancel, vppErrCh)
+	exitOnErrCh(ctx, cancel1, vppErrCh)
 
 	// Create a RPC client for the memif api
 	isClient := true
@@ -77,7 +92,8 @@ func main() {
 	helloMsg := handleHelloMsg(ctx, connClient)
 	// send init message to server
 	sendInitMsg(ctx, connClient, helloMsg)
-	cancel()
+	cancel1()
+	cancel2()
 	<-vppErrCh
 }
 
@@ -156,7 +172,6 @@ func dumpMemif(ctx context.Context, conn api.Connection) {
 	// }
 	// <-done
 	log.Entry(ctx).Infof("Finish dumping from memif")
-	return
 }
 
 func handleHelloMsg(ctx context.Context, connClient net.Conn) (helloMsgReply *HelloMsg) {
@@ -182,7 +197,7 @@ func sendInitMsg(ctx context.Context, connClient net.Conn, helloMsg *HelloMsg) {
 	initMsg := &InitMsg{
 		Ack:     Ack,
 		Version: ((helloMsg.MaxVersion << 8) | helloMsg.MinVersion),
-		Id:      0, // hardcoded for now
+		ID:      0, // hardcoded for now
 		Mode:    MEMIF_INTERFACE_MODE_IP,
 		Secret:  [24]uint8{0},
 		Name:    helloMsg.Name,
