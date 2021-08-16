@@ -1,69 +1,73 @@
 package main
 
 import (
-	"context"
-	"net"
-	"time"
-	"encoding/binary"
 	"bufio"
 	"bytes"
+	"context"
+	"encoding/binary"
 	"git.fd.io/govpp.git/api"
-	"github.com/edwarnicke/govpp/binapi/memif"
 	interfaces "github.com/edwarnicke/govpp/binapi/interface"
 	"github.com/edwarnicke/govpp/binapi/interface_types"
+	"github.com/edwarnicke/govpp/binapi/memif"
 	"github.com/edwarnicke/log"
 	"github.com/edwarnicke/vpphelper"
+	"net"
+	"time"
 )
 
 // Ack message type
 type AckMsg struct {
 	Ack uint16
 }
+
 // HelloReplyMsg type
 type HelloMsg struct {
-	Ack AckMsg
-	Name [32]byte // 32 bytes array
-	MinVersion uint16 
-	MaxVersion uint16
-	MaxRegion uint16 
-	MaxM2sRing uint16 
-	MaxS2mRing uint16
-	MaxLog2RingSize uint8 
-} 
+	Ack             AckMsg
+	Name            [32]byte // 32 bytes array
+	MinVersion      uint16
+	MaxVersion      uint16
+	MaxRegion       uint16
+	MaxM2sRing      uint16
+	MaxS2mRing      uint16
+	MaxLog2RingSize uint8
+}
 
 // InitMsg
 const MEMIF_SECRET_SIZE = 24
+
 type MemifInterfaceMode int32
+
 const (
 	MEMIF_INTERFACE_MODE_IP MemifInterfaceMode = iota // the one to create memif
 )
+
 type InitMsg struct {
-	Ack AckMsg
+	Ack     AckMsg
 	Version uint16 // check the file
-	Id uint32 // 0
-	Mode MemifInterfaceMode
+	Id      uint32 // 0
+	Mode    MemifInterfaceMode
 	Secret  [MEMIF_SECRET_SIZE]uint8
-	Name [32]byte
+	Name    [32]byte
 }
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Connect to VPP with a 1 second timeout
 	connectCtx, _ := context.WithTimeout(ctx, time.Second)
 	conn, vppErrCh := vpphelper.StartAndDialContext(connectCtx)
 	exitOnErrCh(ctx, cancel, vppErrCh)
-	
+
 	// Create a RPC client for the memif api
 	isClient := true
 	// Add a memif socket
-	socketID, socketAddr, _:= createMemifSocket(ctx, conn)
+	socketID, socketAddr, _ := createMemifSocket(ctx, conn)
 	// Create a memif interface
 	createMemif(ctx, conn, socketID, isClient)
-	
+
 	// Dump memif info
 	dumpMemif(ctx, conn)
-	
+
 	// connect to VPP
 	connClient, err := net.Dial("unixpacket", socketAddr)
 	if err != nil {
@@ -94,7 +98,7 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (uint32, string
 		"SocketFilename: %v\n"+
 		"IsAdd:%v\n",
 		MemifSocketFilenameAddDel.SocketID, MemifSocketFilenameAddDel.SocketFilename, MemifSocketFilenameAddDel.IsAdd)
-	return MemifSocketFilenameAddDel.SocketID, MemifSocketFilenameAddDel.SocketFilename, memifAddDelErr 
+	return MemifSocketFilenameAddDel.SocketID, MemifSocketFilenameAddDel.SocketFilename, memifAddDelErr
 }
 
 func createMemif(ctx context.Context, conn api.Connection, socketID uint32, isClient bool) {
@@ -119,9 +123,9 @@ func createMemif(ctx context.Context, conn api.Connection, socketID uint32, isCl
 		rsp.SwIfIndex, memifCreate.Role, memifCreate.SocketID)
 
 	// Set AdminUp
-	swinterface := &interfaces.SwInterfaceSetFlags {
-		SwIfIndex: rsp.SwIfIndex, 
-		Flags: interface_types.IF_STATUS_API_FLAG_ADMIN_UP,  
+	swinterface := &interfaces.SwInterfaceSetFlags{
+		SwIfIndex: rsp.SwIfIndex,
+		Flags:     interface_types.IF_STATUS_API_FLAG_ADMIN_UP,
 	}
 	retVal, err := interfaces.NewServiceClient(conn).SwInterfaceSetFlags(ctx, swinterface)
 	if err != nil {
@@ -130,7 +134,7 @@ func createMemif(ctx context.Context, conn api.Connection, socketID uint32, isCl
 	log.Entry(ctx).Infof("SwInterfaceSetFlags %v", retVal)
 }
 
-func dumpMemif(ctx context.Context, conn api.Connection) () {
+func dumpMemif(ctx context.Context, conn api.Connection) {
 	c := memif.NewServiceClient(conn)
 
 	memifDumpMsg, err := c.MemifDump(ctx, &memif.MemifDump{})
@@ -152,10 +156,10 @@ func dumpMemif(ctx context.Context, conn api.Connection) () {
 	// }
 	// <-done
 	log.Entry(ctx).Infof("Finish dumping from memif")
-	return 
+	return
 }
 
-func handleHelloMsg(ctx context.Context, connClient net.Conn) (helloMsgReply *HelloMsg){
+func handleHelloMsg(ctx context.Context, connClient net.Conn) (helloMsgReply *HelloMsg) {
 	helloMsg := &HelloMsg{}
 	reader := bufio.NewReader(connClient)
 	err := binary.Read(reader, binary.BigEndian, helloMsg)
@@ -163,25 +167,25 @@ func handleHelloMsg(ctx context.Context, connClient net.Conn) (helloMsgReply *He
 		log.Entry(ctx).Fatalln("ERROR: read from VPP master hello message failed:", err)
 	}
 	log.Entry(ctx).Infof("max_region: %v\n"+
-	"Max_m2s_ring: %v\n"+
-	"Max_s2m_ring: %v\n"+
-	"Min_version: %v\n"+
-	"Max_version: %v\n"+
-	"Max_log2_ring_size: %v\n"+
-	"Name: %v\n",
-	helloMsg.MaxRegion, helloMsg.MaxM2sRing, helloMsg.MaxS2mRing, helloMsg.MinVersion, helloMsg.MaxVersion, helloMsg.MaxLog2RingSize, string(helloMsg.Name[:]))
+		"Max_m2s_ring: %v\n"+
+		"Max_s2m_ring: %v\n"+
+		"Min_version: %v\n"+
+		"Max_version: %v\n"+
+		"Max_log2_ring_size: %v\n"+
+		"Name: %v\n",
+		helloMsg.MaxRegion, helloMsg.MaxM2sRing, helloMsg.MaxS2mRing, helloMsg.MinVersion, helloMsg.MaxVersion, helloMsg.MaxLog2RingSize, string(helloMsg.Name[:]))
 	return helloMsg
 }
 
 func sendInitMsg(ctx context.Context, connClient net.Conn, helloMsg *HelloMsg) {
-	Ack := AckMsg {0}
+	Ack := AckMsg{0}
 	initMsg := &InitMsg{
-		Ack: Ack,
-		Version: ((helloMsg.MaxVersion<<8) | helloMsg.MinVersion),
-		Id: 0, // hardcoded for now
-		Mode: MEMIF_INTERFACE_MODE_IP,
-		Secret: [24]uint8{0},
-		Name: helloMsg.Name,
+		Ack:     Ack,
+		Version: ((helloMsg.MaxVersion << 8) | helloMsg.MinVersion),
+		Id:      0, // hardcoded for now
+		Mode:    MEMIF_INTERFACE_MODE_IP,
+		Secret:  [24]uint8{0},
+		Name:    helloMsg.Name,
 	}
 
 	buf := new(bytes.Buffer)
