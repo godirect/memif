@@ -21,25 +21,25 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"io"
+	"net"
+	"time"
+
 	"git.fd.io/govpp.git/api"
 	interfaces "github.com/edwarnicke/govpp/binapi/interface"
 	"github.com/edwarnicke/govpp/binapi/interface_types"
 	"github.com/edwarnicke/govpp/binapi/memif"
 	"github.com/edwarnicke/log"
 	"github.com/edwarnicke/vpphelper"
-	"io"
-	"net"
-	"time"
 )
 
-// AckMsg type
-type AckMsg struct {
+type ackMsg struct {
 	Ack uint16
 }
 
 // HelloMsg type
 type HelloMsg struct {
-	Ack             AckMsg
+	Ack             ackMsg
 	Name            [32]byte // 32 bytes array
 	MinVersion      uint16
 	MaxVersion      uint16
@@ -51,20 +51,18 @@ type HelloMsg struct {
 
 const memifSecretSize = 24
 
-// MemifInterfaceMode
-type MemifInterfaceMode int32
+type memifInterfaceMode int32
 
 const (
-	// MemifInterfaceModeIP
-	MemifInterfaceModeIP MemifInterfaceMode = iota // the one to create memif
+	memifInterfaceModeIP memifInterfaceMode = iota // the one to create memif
 )
 
-// Here is InitMsg
+// InitMsg type
 type InitMsg struct {
-	Ack     AckMsg
+	Ack     ackMsg
 	Version uint16 // check the file
 	ID      uint32 // 0
-	Mode    MemifInterfaceMode
+	Mode    memifInterfaceMode
 	Secret  [memifSecretSize]uint8
 	Name    [32]byte
 }
@@ -196,12 +194,12 @@ func handleHelloMsg(ctx context.Context, connClient io.Reader) (helloMsgReply *H
 }
 
 func sendInitMsg(ctx context.Context, connClient io.Writer, helloMsg *HelloMsg) {
-	Ack := AckMsg{0}
+	Ack := ackMsg{0}
 	initMsg := &InitMsg{
 		Ack:     Ack,
 		Version: ((helloMsg.MaxVersion << 8) | helloMsg.MinVersion),
 		ID:      0, // hardcoded for now
-		Mode:    MemifInterfaceModeIP,
+		Mode:    memifInterfaceModeIP,
 		Secret:  [24]uint8{0},
 		Name:    helloMsg.Name,
 	}
