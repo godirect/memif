@@ -35,20 +35,16 @@ import (
 type AckMsg struct {
 	Ack uint16
 }
-type MemifMsg struct {
-	HelloMsgType HelloMsg
-	InitMsgType InitMsg
-}
 // HelloReplyMsg type
 type HelloMsg struct {
 	Ack AckMsg
 	Name [32]byte // 32 bytes array
-	Min_version uint16 
-	Max_version uint16
-	Max_region uint16 
-	Max_m2s_ring uint16 
-	Max_s2m_ring uint16
-	Max_log2_ring_size uint8 
+	MinVersion uint16 
+	MaxVersion uint16
+	MaxRegion uint16 
+	MaxM2sRing uint16 
+	MaxS2mRing uint16
+	MaxLog2RingSize uint8 
 } 
 
 // InitMsg
@@ -84,17 +80,17 @@ func main() {
 	createMemif(ctx, conn, socketID, isClient)
 	
 	// Dump memif info
-	// dumpMemif(ctx, conn)
+	dumpMemif(ctx, conn)
 	
 	// connect to VPP
-	conn_client, err := net.Dial("unixpacket", socketAddr)
+	connClient, err := net.Dial("unixpacket", socketAddr)
 	if err != nil {
 		log.Entry(ctx).Fatalln("ERROR: connect to VPP master failed:", err)
 	}
 	// read hello message from server
-	helloMsg := handleHelloMsg(ctx, conn_client)
+	helloMsg := handleHelloMsg(ctx, connClient)
 	// send init message to server
-	sendInitMsg(ctx, conn_client, helloMsg)
+	sendInitMsg(ctx, connClient, helloMsg)
 	cancel()
 	<-vppErrCh
 }
@@ -119,7 +115,7 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint3
 	return MemifSocketFilenameAddDel.SocketID, MemifSocketFilenameAddDel.SocketFilename, memifAddDel_err 
 }
 
-func createMemif(ctx context.Context, conn api.Connection, socketID uint32, isClient bool) error {
+func createMemif(ctx context.Context, conn api.Connection, socketID uint32, isClient bool) {
 	role := memif.MEMIF_ROLE_API_MASTER
 	if !isClient {
 		role = memif.MEMIF_ROLE_API_SLAVE
@@ -150,8 +146,6 @@ func createMemif(ctx context.Context, conn api.Connection, socketID uint32, isCl
 		log.Entry(ctx).Fatalln("Set AdminUp ERROR:  %v", err)
 	}
 	log.Entry(ctx).Infof("SwInterfaceSetFlags %v", retVal)
-
-	return nil
 }
 
 func dumpMemif(ctx context.Context, conn api.Connection) () {
@@ -179,9 +173,9 @@ func dumpMemif(ctx context.Context, conn api.Connection) () {
 	return 
 }
 
-func handleHelloMsg(ctx context.Context, conn_client net.Conn) (helloMsgReply *HelloMsg){
+func handleHelloMsg(ctx context.Context, connClient net.Conn) (helloMsgReply *HelloMsg){
 	helloMsg := &HelloMsg{}
-	reader := bufio.NewReader(conn_client)
+	reader := bufio.NewReader(connClient)
 	err := binary.Read(reader, binary.BigEndian, helloMsg)
 	if err != nil {
 		log.Entry(ctx).Fatalln("ERROR: read from VPP master hello message failed:", err)
@@ -193,13 +187,15 @@ func handleHelloMsg(ctx context.Context, conn_client net.Conn) (helloMsgReply *H
 	"Max_version: %v\n"+
 	"Max_log2_ring_size: %v\n"+
 	"Name: %v\n",
-	helloMsg.Max_region, helloMsg.Max_m2s_ring, helloMsg.Max_s2m_ring, helloMsg.Min_version, helloMsg.Max_version, helloMsg.Max_log2_ring_size, string(helloMsg.Name[:]))
+	helloMsg.MaxRegion, helloMsg.MaxM2sRing, helloMsg.MaxS2mRing, helloMsg.MinVersion, helloMsg.MaxVersion, helloMsg.MaxLog2RingSize, string(helloMsg.Name[:]))
 	return helloMsg
 }
 
-func sendInitMsg(ctx context.Context, conn_client net.Conn, helloMsg *HelloMsg) {
+func sendInitMsg(ctx context.Context, connClient net.Conn, helloMsg *HelloMsg) {
+	Ack := AckMsg {0}
 	initMsg := &InitMsg{
-		Version: ((helloMsg.Max_version<<8) | helloMsg.Min_version),
+		Ack: Ack,
+		Version: ((helloMsg.MaxVersion<<8) | helloMsg.MinVersion),
 		Id: 0, // hardcoded for now
 		Mode: MEMIF_INTERFACE_MODE_IP,
 		Secret: [24]uint8{0},
@@ -211,7 +207,7 @@ func sendInitMsg(ctx context.Context, conn_client net.Conn, helloMsg *HelloMsg) 
 	if err != nil {
 		log.Entry(ctx).Fatalln("Encoding Error", err)
 	}
-	writer := bufio.NewWriter(conn_client)
+	writer := bufio.NewWriter(connClient)
 	_, writeErr := writer.Write(buf.Bytes())
 	if writeErr != nil {
 		log.Entry(ctx).Fatalln("Error while writing encoded message over connection", writeErr)
