@@ -27,6 +27,7 @@ import (
 	"github.com/edwarnicke/govpp/binapi/memif"
 	"github.com/edwarnicke/log"
 	"github.com/edwarnicke/vpphelper"
+	"io"
 	"net"
 	"time"
 )
@@ -48,21 +49,23 @@ type HelloMsg struct {
 	MaxLog2RingSize uint8
 }
 
-const MemifSecretSize = 24
+const memifSecretSize = 24
 
-// MemifInterfaceMode 
+// MemifInterfaceMode
 type MemifInterfaceMode int32
+
 const (
-	MEMIF_INTERFACE_MODE_IP MemifInterfaceMode = iota // the one to create memif
+	// MemifInterfaceModeIP
+	MemifInterfaceModeIP MemifInterfaceMode = iota // the one to create memif
 )
 
-// InitMsg
+// Here is InitMsg
 type InitMsg struct {
 	Ack     AckMsg
 	Version uint16 // check the file
 	ID      uint32 // 0
 	Mode    MemifInterfaceMode
-	Secret  [MemifSecretSize]uint8
+	Secret  [memifSecretSize]uint8
 	Name    [32]byte
 }
 
@@ -97,7 +100,7 @@ func main() {
 	<-vppErrCh
 }
 
-func createMemifSocket(ctx context.Context, conn api.Connection) (uint32, string, error) {
+func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint32, socketFilename string, err error) {
 	c := memif.NewServiceClient(conn)
 	MemifSocketFilenameAddDel := memif.MemifSocketFilenameAddDel{
 		IsAdd:          true,
@@ -174,7 +177,7 @@ func dumpMemif(ctx context.Context, conn api.Connection) {
 	log.Entry(ctx).Infof("Finish dumping from memif")
 }
 
-func handleHelloMsg(ctx context.Context, connClient net.Conn) (helloMsgReply *HelloMsg) {
+func handleHelloMsg(ctx context.Context, connClient io.Reader) (helloMsgReply *HelloMsg) {
 	helloMsg := &HelloMsg{}
 	reader := bufio.NewReader(connClient)
 	err := binary.Read(reader, binary.BigEndian, helloMsg)
@@ -192,13 +195,13 @@ func handleHelloMsg(ctx context.Context, connClient net.Conn) (helloMsgReply *He
 	return helloMsg
 }
 
-func sendInitMsg(ctx context.Context, connClient net.Conn, helloMsg *HelloMsg) {
+func sendInitMsg(ctx context.Context, connClient io.Writer, helloMsg *HelloMsg) {
 	Ack := AckMsg{0}
 	initMsg := &InitMsg{
 		Ack:     Ack,
 		Version: ((helloMsg.MaxVersion << 8) | helloMsg.MinVersion),
 		ID:      0, // hardcoded for now
-		Mode:    MEMIF_INTERFACE_MODE_IP,
+		Mode:    MemifInterfaceModeIP,
 		Secret:  [24]uint8{0},
 		Name:    helloMsg.Name,
 	}
