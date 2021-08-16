@@ -86,7 +86,7 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (uint32, string
 	}
 	_, memifAddDelErr := c.MemifSocketFilenameAddDel(ctx, &MemifSocketFilenameAddDel)
 	if memifAddDelErr != nil {
-		log.Entry(ctx).Fatalln("ERROR: MemifSocketFilenameAddDel failed:", memifAddDel_err)
+		log.Entry(ctx).Fatalln("ERROR: MemifSocketFilenameAddDel failed:", memifAddDelErr)
 	}
 
 	log.Entry(ctx).Infof("Socket file created\n"+
@@ -94,7 +94,7 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (uint32, string
 		"SocketFilename: %v\n"+
 		"IsAdd:%v\n",
 		MemifSocketFilenameAddDel.SocketID, MemifSocketFilenameAddDel.SocketFilename, MemifSocketFilenameAddDel.IsAdd)
-	return MemifSocketFilenameAddDel.SocketID, MemifSocketFilenameAddDel.SocketFilename, memifAddDel_err 
+	return MemifSocketFilenameAddDel.SocketID, MemifSocketFilenameAddDel.SocketFilename, memifAddDelErr 
 }
 
 func createMemif(ctx context.Context, conn api.Connection, socketID uint32, isClient bool) {
