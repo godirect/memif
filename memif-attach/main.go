@@ -103,7 +103,7 @@ func createMemifSocket(ctx context.Context, conn api.Connection) (socketID uint3
 	MemifSocketFilenameAddDel := memif.MemifSocketFilenameAddDel{
 		IsAdd:          true,
 		SocketID:       2,
-		SocketFilename: "/var/run/vpp/memif11.sock",
+		SocketFilename: "/var/run/vpp/memif1.sock",
 	}
 	_, memifAddDelErr := c.MemifSocketFilenameAddDel(ctx, &MemifSocketFilenameAddDel)
 	if memifAddDelErr != nil {
@@ -144,11 +144,10 @@ func createMemif(ctx context.Context, conn api.Connection, socketID uint32, isCl
 		SwIfIndex: rsp.SwIfIndex,
 		Flags:     interface_types.IF_STATUS_API_FLAG_ADMIN_UP,
 	}
-	retVal, err := interfaces.NewServiceClient(conn).SwInterfaceSetFlags(ctx, swinterface)
+	_, SwInterfaceSetFlagsErr := interfaces.NewServiceClient(conn).SwInterfaceSetFlags(ctx, swinterface)
 	if err != nil {
-		log.Entry(ctx).Fatalln("Set AdminUp ERROR:", err)
+		log.Entry(ctx).Fatalln("Set AdminUp ERROR:", SwInterfaceSetFlagsErr)
 	}
-	log.Entry(ctx).Infof("SwInterfaceSetFlags %v", retVal)
 }
 
 func dumpMemif(ctx context.Context, conn api.Connection) {
@@ -160,14 +159,24 @@ func dumpMemif(ctx context.Context, conn api.Connection) {
 	}
 	log.Entry(ctx).Infof("Socket file dump")
 	for {
-		reply, err := memifDumpMsg.Recv()
-		if err == io.EOF {
+		memifDetails, err := memifDumpMsg.Recv()
+		if err != nil {
 			break
 		}
-		if err != nil {
-			log.Entry(ctx).Fatalln("ERROR: MemifDump Recv failed:", err)
-		}
-		log.Entry(ctx).Infof("Socket ID from dump:%v", reply.ID)
+		log.Entry(ctx).Infof(
+			"SwIfIndex: %v\n"+
+				"HwAddr: %v\n"+
+				"ID: %v\n"+
+				"Role: %v\n"+
+				"Mode: %v\n"+
+				"ZeroCopy: %v\n"+
+				"SocketID: %v\n"+
+				"RingSize: %v\n"+
+				"BufferSize: %v\n"+
+				"Flags: %v\n"+
+				"IfName: %v\n",
+			memifDetails.SwIfIndex, memifDetails.HwAddr, memifDetails.ID, memifDetails.Role, memifDetails.Mode, memifDetails.ZeroCopy,
+			memifDetails.SocketID, memifDetails.RingSize, memifDetails.BufferSize, memifDetails.Flags, memifDetails.IfName)
 	}
 	log.Entry(ctx).Infof("Finish dumping from memif")
 }
