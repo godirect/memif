@@ -24,6 +24,9 @@ import (
 	"io"
 	"net"
 	"time"
+	"unsafe"
+
+	"syscall"
 
 	"git.fd.io/govpp.git/api"
 	interfaces "github.com/edwarnicke/govpp/binapi/interface"
@@ -31,7 +34,16 @@ import (
 	"github.com/edwarnicke/govpp/binapi/memif"
 	"github.com/edwarnicke/log"
 	"github.com/edwarnicke/vpphelper"
+	memfd "github.com/justincormack/go-memfd"
 )
+
+type memifRegionIndexT uint16
+type memifRegionOffsetT uint32
+type memifRegionSizeT uint64
+type memifRingIndexT uint16
+
+const SizeOfMemifDescT = 16
+const SizeOfRingT = 16
 
 type ackMsg struct {
 	Ack uint16
@@ -65,6 +77,43 @@ type InitMsg struct {
 	Mode    memifInterfaceMode
 	Secret  [memifSecretSize]uint8
 	Name    [32]byte
+}
+
+// AddRegionMsg message
+type AddRegionMsg struct {
+	Ack   ackMsg
+	Index uint16
+	Size  uint64
+}
+
+// AddRingMsg message
+type AddRingMsg struct {
+	Ack                ackMsg
+	Index              uint16
+	Region             uint16
+	Offset             uint32
+	Max_log2_ring_size uint8
+	Private_hdr_size   uint16
+}
+
+// AddRingMsg type
+type MemifRingT struct {
+	Pad1   [64]byte
+	cookie uint32
+	flags  uint16
+	head   uint16
+	Pad2   [56]byte
+	tail   uint16
+	desc   [0]MemifDescT
+}
+
+// MemifDescT type
+type MemifDescT struct {
+	flags    uint16
+	region   memifRegionIndexT
+	length   uint32
+	offset   memifRegionOffsetT
+	metadata uint32
 }
 
 func main() {
@@ -221,6 +270,45 @@ func sendInitMsg(ctx context.Context, connClient io.Writer, helloMsg *HelloMsg) 
 		log.Entry(ctx).Fatalln("Error while writing encoded message over connection", writeErr)
 	}
 	log.Entry(ctx).Infof("Init message sent")
+}
+
+func createMemRegion(ctx context.Context, unixConn net.Conn, helloMsg *HelloMsg, bufferSize uint16) *memfd.Memfd {
+	mfd, err := memfd.Create()
+	if err != nil {
+		log.Entry(ctx).Fatalln("Memory region create Error", err)
+	}
+	setSizeErr := mfd.SetSize(1024)
+	if setSizeErr != nil {
+		log.Entry(ctx).Fatalln("Memory region set size Error", err)
+	}
+	fd := mfd.Fd()
+
+	Ack := ackMsg{0}
+	regionSize := getRegionSize(bufferSize, helloMsg)
+	addRegionMsg := &AddRegionMsg{
+		Ack:   Ack,
+		Index: uint16(fd), // should fix later
+		Size:  regionSize, // calculate in https://github.com/FDio/vpp/blob/b8e7a45d56be9f3e11b07b82fd899160e2af1bf1/src/plugins/memif/memif.c#L376
+	}
+	buf := new(bytes.Buffer)
+	writeErr := binary.Write(buf, binary.BigEndian, addRegionMsg)
+	if writeErr != nil {
+		log.Entry(ctx).Fatalln("Encoding Error", err)
+	}
+
+	rights := syscall.UnixRights(int(fd))
+	unixConn.(interface {
+		WriteMsgUnix(b, oob []byte, addr *net.UnixAddr) (n, oobn int, err error)
+	}).WriteMsgUnix(buf.Bytes(), rights, nil)
+	return mfd
+}
+
+func getRegionSize(BufferSize uint16, helloMsg *HelloMsg) uintptr {
+	memifRingT := MemifRingT{}
+	memifDescT := MemifDescT{}
+	bufferOffset := (uintptr(helloMsg.Max_s2m_ring + helloMsg.Max_m2s_ring)) * (unsafe.Sizeof(memifRingT) + SizeOfMemifDescT*(1<<helloMsg.Max_log2_ring_size))
+	regionSize := uintptr(BufferSize*(1<<helloMsg.Max_log2_ring_size)*(helloMsg.Max_s2m_ring+helloMsg.Max_m2s_ring)) + bufferOffset
+	return regionSize
 }
 
 func exitOnErrCh(ctx context.Context, cancel context.CancelFunc, errCh <-chan error) {
