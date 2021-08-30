@@ -25,13 +25,29 @@ import (
 	"net"
 	"time"
 
+	"syscall"
+
 	"git.fd.io/govpp.git/api"
 	interfaces "github.com/edwarnicke/govpp/binapi/interface"
 	"github.com/edwarnicke/govpp/binapi/interface_types"
 	"github.com/edwarnicke/govpp/binapi/memif"
 	"github.com/edwarnicke/log"
 	"github.com/edwarnicke/vpphelper"
+	memfd "github.com/justincormack/go-memfd"
 )
+
+type memifRegionIndexT uint16
+type memifRegionOffsetT uint32
+type memifRegionSizeT uint64
+type memifRingIndexT uint16
+
+const SizeOfMemifDescT = 16
+const SizeOfMemifRingT = 192
+
+const NumM2SRings = 2
+const NumS2MRings = 2
+const Log2RingSize = 1024
+const SizeOfRingT = 16
 
 type ackMsg struct {
 	Ack uint16
@@ -67,6 +83,44 @@ type InitMsg struct {
 	Name    [32]byte
 }
 
+// AddRegionMsg message
+type AddRegionMsg struct {
+	Ack   ackMsg
+	Index uint16
+	Size  uint64
+}
+
+// AddRingMsg message
+type AddRingMsg struct {
+	Ack                ackMsg
+	Index              uint16
+	Region             uint16
+	Offset             uint32
+	Max_log2_ring_size uint8
+	Private_hdr_size   uint16
+}
+
+// AddRingMsg type
+type MemifRingT struct {
+	Pad1   [64]byte
+	Cookie uint32
+	Flags  uint16
+	Head   uint16
+	Pad2   [56]byte
+	Tail   uint16
+	Pad3   [62]byte
+	// desc   [0]MemifDescT
+}
+
+// MemifDescT type
+type MemifDescT struct {
+	Flags    uint16
+	Region   memifRegionIndexT
+	Length   uint32
+	Offset   memifRegionOffsetT
+	Metadata uint32
+}
+
 func main() {
 	ctx, cancel1 := context.WithCancel(context.Background())
 	// Connect to VPP with a 1 second timeout
@@ -82,7 +136,7 @@ func main() {
 	createMemif(ctx, conn, socketID, isClient)
 
 	// Dump memif info
-	dumpMemif(ctx, conn)
+	memifDetails := dumpMemif(ctx, conn)
 
 	// connect to VPP
 	connClient, err := net.Dial("unixpacket", socketAddr)
@@ -93,6 +147,9 @@ func main() {
 	helloMsg := handleHelloMsg(ctx, connClient)
 	// send init message to server
 	sendInitMsg(ctx, connClient, helloMsg)
+
+	// create and send share memory region msg
+	createAndSendMemRegion(ctx, connClient, *memifDetails)
 	cancel1()
 	cancel2()
 	<-vppErrCh
@@ -150,7 +207,7 @@ func createMemif(ctx context.Context, conn api.Connection, socketID uint32, isCl
 	}
 }
 
-func dumpMemif(ctx context.Context, conn api.Connection) {
+func dumpMemif(ctx context.Context, conn api.Connection) *memif.MemifDetails {
 	c := memif.NewServiceClient(conn)
 
 	memifDumpMsg, err := c.MemifDump(ctx, &memif.MemifDump{})
@@ -158,27 +215,24 @@ func dumpMemif(ctx context.Context, conn api.Connection) {
 		log.Entry(ctx).Fatalln("ERROR: MemifDump failed:", err)
 	}
 	log.Entry(ctx).Infof("Socket file dump")
-	for {
-		memifDetails, err := memifDumpMsg.Recv()
-		if err != nil {
-			break
-		}
-		log.Entry(ctx).Infof(
-			"SwIfIndex: %v\n"+
-				"HwAddr: %v\n"+
-				"ID: %v\n"+
-				"Role: %v\n"+
-				"Mode: %v\n"+
-				"ZeroCopy: %v\n"+
-				"SocketID: %v\n"+
-				"RingSize: %v\n"+
-				"BufferSize: %v\n"+
-				"Flags: %v\n"+
-				"IfName: %v\n",
-			memifDetails.SwIfIndex, memifDetails.HwAddr, memifDetails.ID, memifDetails.Role, memifDetails.Mode, memifDetails.ZeroCopy,
-			memifDetails.SocketID, memifDetails.RingSize, memifDetails.BufferSize, memifDetails.Flags, memifDetails.IfName)
-	}
+	memifDetails, err := memifDumpMsg.Recv()
+
+	log.Entry(ctx).Infof(
+		"SwIfIndex: %v\n"+
+			"HwAddr: %v\n"+
+			"ID: %v\n"+
+			"Role: %v\n"+
+			"Mode: %v\n"+
+			"ZeroCopy: %v\n"+
+			"SocketID: %v\n"+
+			"RingSize: %v\n"+
+			"BufferSize: %v\n"+
+			"Flags: %v\n"+
+			"IfName: %v\n",
+		memifDetails.SwIfIndex, memifDetails.HwAddr, memifDetails.ID, memifDetails.Role, memifDetails.Mode, memifDetails.ZeroCopy,
+		memifDetails.SocketID, memifDetails.RingSize, memifDetails.BufferSize, memifDetails.Flags, memifDetails.IfName)
 	log.Entry(ctx).Infof("Finish dumping from memif")
+	return memifDetails
 }
 
 func handleHelloMsg(ctx context.Context, connClient io.Reader) (helloMsgReply *HelloMsg) {
@@ -221,6 +275,45 @@ func sendInitMsg(ctx context.Context, connClient io.Writer, helloMsg *HelloMsg) 
 		log.Entry(ctx).Fatalln("Error while writing encoded message over connection", writeErr)
 	}
 	log.Entry(ctx).Infof("Init message sent")
+}
+
+func createAndSendMemRegion(ctx context.Context, unixConn net.Conn, memifDetails memif.MemifDetails) *memfd.Memfd {
+	// crate share memory region
+	regionSize := getRegionSize(memifDetails)
+	mfd, err := memfd.Create()
+	if err != nil {
+		log.Entry(ctx).Fatalln("Memory region create Error", err)
+	}
+	setSizeErr := mfd.SetSize(int64(regionSize))
+	if setSizeErr != nil {
+		log.Entry(ctx).Fatalln("Memory region set size Error", err)
+	}
+	fd := mfd.Fd()
+
+	// init add region msg and send to master
+	Ack := ackMsg{0}
+	addRegionMsg := &AddRegionMsg{
+		Ack:   Ack,
+		Index: uint16(fd), // should fix later
+		Size:  regionSize, // calculate in https://github.com/FDio/vpp/blob/b8e7a45d56be9f3e11b07b82fd899160e2af1bf1/src/plugins/memif/memif.c#L376
+	}
+	buf := new(bytes.Buffer)
+	writeErr := binary.Write(buf, binary.BigEndian, addRegionMsg)
+	if writeErr != nil {
+		log.Entry(ctx).Fatalln("Encoding Error", err)
+	}
+
+	rights := syscall.UnixRights(int(fd))
+	unixConn.(interface {
+		WriteMsgUnix(b, oob []byte, addr *net.UnixAddr) (n, oobn int, err error)
+	}).WriteMsgUnix(buf.Bytes(), rights, nil)
+	return mfd
+}
+
+func getRegionSize(memifDetails memif.MemifDetails) uint64 {
+	bufferOffset := (NumS2MRings + NumM2SRings) * (SizeOfMemifRingT + SizeOfMemifDescT*(1<<memifDetails.RingSize)) // ringsize default to 1024 entries
+	regionSize := uint64(memifDetails.BufferSize)*(1<<memifDetails.RingSize)*uint64(NumS2MRings+NumM2SRings) + uint64(bufferOffset)
+	return regionSize
 }
 
 func exitOnErrCh(ctx context.Context, cancel context.CancelFunc, errCh <-chan error) {
