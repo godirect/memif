@@ -7,4 +7,4 @@ require (
 	memif v0.0.0
 )
 
-replace memif v0.0.0 => /home/rtan/Work_dir/FD.io/memif/memif-new/memif
+replace memif v0.0.0 => ../../memif
