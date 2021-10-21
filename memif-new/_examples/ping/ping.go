@@ -63,7 +63,7 @@
 	 go func(errChan chan<- error, quitChan <-chan struct{}, wg *sync.WaitGroup) {
 		 defer wg.Done()
 		 echoPayload := getIcmpPacket()
-		 fmt.Print(string(echoPayload))
+		 fmt.Printf("echoPayload: %v\n",echoPayload)
 		 // allocate packet buffer
 		 pkt := make([]byte, 2048)
 		 // get rx queue
@@ -78,42 +78,18 @@
 			 errChan <- err
 			 return
 		 }	
-		 txq0.WritePacket(echoPayload)
 		 rxqFd, _:=rxq0.GetEventFd()
-		 handleEpoll(rxqFd, rxq0, pkt)
-
-
-		//  time.Sleep(10000 * time.Millisecond) // check if rx queue has bytes
-		//  _, Rxerr := rxq0.ReadPacket(pkt)
-		//  fmt.Printf("%v\n",pkt)
-		//  if Rxerr != nil {
-		// 	 errChan <- Rxerr
-		// 	 return
-		//  }		
-		//  for {
-		// 	 select {
-		// 	 case <-quitChan: // channel closed
-		// 		 return
-		// 	 default:
-		// 		 // read packet from shared memory
-		// 		//  pktLen, err := rxq0.ReadPacket(pkt)
-		// 		//  if pktLen > 0 {
-		// 		// 	 // write packet to shared memory
-		// 		// 	 txq0.WritePacket(pkt[:pktLen])
-		// 		//  } else if err != nil {
-		// 		// 	 errChan <- err
-		// 		// 	 return
-		// 		//  }
-		// 		txq0.WritePacket(echoPayload)
-		// 		time.Sleep(100 * time.Millisecond) // check if rx queue has bytes
-		// 		_, err := rxq0.ReadPacket(pkt)
-		// 		fmt.Printf("%v\n",pkt[:64])
-		// 		if err != nil {
-		// 			errChan <- err
-		// 			return
-		// 		}				
-		// 	 }
-		//  }
+		 fmt.Printf("rx queue fd: %v\n", rxqFd)
+		 buffer := make([]byte, 100)
+		 syscall.Read(rxqFd, buffer)
+		 ch := make(chan struct{}) // empty chan struct
+		 go func() {
+			handleEpoll(rxqFd, rxq0, pkt)
+			close(ch)
+		 } () 
+		 txq0.WritePacket(echoPayload)
+		 fmt.Println("Packet sent")
+		 <-ch
 	 }(data.errChan, data.quitChan, &data.wg)
  
 	 return nil
@@ -281,27 +257,16 @@
 	}
 	
 	for {
-		nevents, e := syscall.EpollWait(epfd, events[:], -1)
+		nevents, e := syscall.EpollWait(epfd, events[:], 10)
 		if e != nil {
 			fmt.Println("epoll_wait: ", e)
 			break
 		}
-
+		// fmt.Printf("Get event %v\n", nevents)
 		for ev := 0; ev < nevents; ev++ {
-			if int(events[ev].Fd) == fd {
-				connFd, _, err := syscall.Accept(fd)
-				if err != nil {
-					fmt.Println("accept: ", err)
-					continue
-				}
-				syscall.SetNonblock(fd, true)
-				event.Events = syscall.EPOLLIN | EPOLLET
-				event.Fd = int32(connFd)
-				if err := syscall.EpollCtl(epfd, syscall.EPOLL_CTL_ADD, connFd, &event); err != nil {
-					fmt.Print("epoll_ctl: ", connFd, err)
-					os.Exit(1)
-				}
-			} else {
+			if int(events[ev].Fd) == fd { // handle weired
+				fmt.Println("Found")
+
 				_, Rxerr := qid.ReadPacket(pkt)
 				fmt.Print("Start printing")
 				fmt.Printf("%v\n",string(pkt))
@@ -310,6 +275,9 @@
 					// errChan <- Rxerr
 					return
 				}		
+			} else {
+				// Error handling 
+				fmt.Println("Should not reach here")	
 			}
 		}
 
@@ -322,6 +290,6 @@
 	ipv4Checksum := ipv4Header.CalculateChecksum()
 	ipv4Header.EncodePartial(ipv4Checksum, 28)
 	// icmpHeader := header.ICMPv4{0x08, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00}
-	fmt.Print(ipv4Header)
+	// fmt.Print(ipv4Header)
 	return ipv4Header
 }
